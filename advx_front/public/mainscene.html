@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>主场景</title>
+    <style>
+        html, body {
+            width: 100vw;
+            height: 100vh;
+            margin: 0;
+            padding: 0;
+            background: #000;
+            overflow: hidden;
+        }
+        #mainBg, #catCanvas {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100vw;
+            height: 100vh;
+            display: block;
+        }
+        #mainBg { z-index: 0; }
+        #catCanvas { z-index: 1; pointer-events: none; }
+
+        /* AI对话气泡样式 */
+        .chat-bubble {
+            position: absolute;
+            min-width: 220px;
+            max-width: 320px;
+            background: #f5ecd7;
+            border: 2px solid #e2cfa5;
+            border-radius: 18px 18px 18px 0;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.12);
+            padding: 12px 16px 8px 16px;
+            z-index: 1000;
+            display: none;
+            font-size: 15px;
+            color: #5a4a2c;
+            transition: left 0.1s, top 0.1s;
+            font-family: Arial, sans-serif;
+        }
+        .chat-bubble.active { display: block; }
+        .chat-bubble .bubble-arrow {
+            position: absolute;
+            left: 18px;
+            bottom: -16px;
+            width: 0; height: 0;
+            border-top: 16px solid #f5ecd7;
+            border-left: 16px solid transparent;
+            border-right: 16px solid transparent;
+            z-index: 1001;
+        }
+        .chat-bubble .bubble-content {
+            max-height: 120px;
+            overflow-y: auto;
+            margin-bottom: 8px;
+            word-break: break-all;
+        }
+        .chat-bubble .bubble-input {
+            display: flex;
+            gap: 6px;
+        }
+        .chat-bubble textarea {
+            flex: 1;
+            border: 1px solid #e2cfa5;
+            border-radius: 6px;
+            padding: 6px 8px;
+            font-size: 14px;
+            resize: none;
+            background: #f9f6ef;
+            color: #5a4a2c;
+            outline: none;
+            font-family: Arial, sans-serif;
+        }
+        .chat-bubble button {
+            background: #e2cfa5;
+            color: #5a4a2c;
+            border: none;
+            border-radius: 6px;
+            padding: 0 14px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+            font-family: Arial, sans-serif;
+        }
+        .chat-bubble button:hover {
+            background: #d1b97a;
+        }
+    </style>
+</head>
+<body>
+<canvas id="mainBg"></canvas>
+<canvas id="catCanvas"></canvas>
+<!-- AI对话气泡 -->
+<div class="chat-bubble" id="chatBubble">
+    <div class="bubble-content" id="chatMessages">
+        <div class="message system">
+            <div class="message-content">
+                <p>您好！我是小珂喵AI，有什么想问我的吗？</p>
+            </div>
+        </div>
+    </div>
+    <div class="bubble-input">
+        <textarea id="userInput" placeholder="输入你的问题..." rows="2"></textarea>
+        <button id="sendButton">发送</button>
+    </div>
+    <div class="bubble-arrow"></div>
+</div>
+<script>
+    // 背景
+    const bgCanvas = document.getElementById('mainBg');
+    const bgCtx = bgCanvas.getContext('2d');
+    const bgImg = new Image();
+    bgImg.src = '/main_scence/main_scence.png';
+
+    // 小猫动画
+    const catCanvas = document.getElementById('catCanvas');
+    const catCtx = catCanvas.getContext('2d');
+    const framePrefix = '/170-261 dog lop/cat-run_';
+    const frameSuffix = '.png';
+    const rightFrames = [0, 2, 4, 6, 8, 10, 12];
+    const leftFrames = [1, 3, 5, 7, 9, 11, 13];
+    let currentDirection = 'right';
+    let currentFrameIndex = 0;
+    const images = [];
+    let loaded = 0;
+    const imgW = 256;
+    const imgH = 256;
+    const speed = 32;
+    let posX = 0;
+    let posY = 0;
+    const keyState = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
+    const frameRate = 24;
+    let canvasW = 0;
+    let canvasH = 0;
+
+    // 视窗系统
+    let viewportX = 0;
+    let viewportY = 0;
+    let worldWidth = 0;
+    let worldHeight = 0;
+    let viewportWidth = 0;
+    let viewportHeight = 0;
+
+    // 预加载小猫帧
+    const allFrames = [...rightFrames, ...leftFrames];
+    for (let i = 0; i < allFrames.length; i++) {
+        const img = new Image();
+        img.src = `${framePrefix}${allFrames[i]}${frameSuffix}`;
+        img.onload = () => {
+            loaded++;
+            if (loaded === allFrames.length && bgImg.complete) {
+                start();
+            }
+        };
+        images.push(img);
+    }
+    bgImg.onload = function() {
+        if (loaded === allFrames.length) start();
+    };
+
+    function resizeCanvas() {
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const dpr = window.devicePixelRatio || 1;
+        bgCanvas.width = vw * dpr;
+        bgCanvas.height = vh * dpr;
+        catCanvas.width = vw * dpr;
+        catCanvas.height = vh * dpr;
+        bgCanvas.style.width = vw + 'px';
+        bgCanvas.style.height = vh + 'px';
+        catCanvas.style.width = vw + 'px';
+        catCanvas.style.height = vh + 'px';
+        bgCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        catCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        canvasW = vw;
+        canvasH = vh;
+        viewportWidth = vw;
+        viewportHeight = vh;
+    }
+
+    function calculateWorldSize() {
+        const scale = window.innerHeight / bgImg.height * 2;
+        worldWidth = bgImg.width * scale;
+        worldHeight = bgImg.height * scale;
+
+        if (viewportX === 0 && viewportY === 0) {
+            viewportX = worldWidth / 2 - viewportWidth / 2;
+            viewportY = worldHeight / 2 - viewportHeight / 2;
+        }
+    }
+
+    function drawBg() {
+        bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
+        const scale = window.innerHeight / bgImg.height * 2;
+        const drawWidth = bgImg.width * scale;
+        const drawHeight = bgImg.height * scale;
+
+        const bgWorldX = (worldWidth - drawWidth) / 2;
+        const bgWorldY = (worldHeight - drawHeight) / 2;
+
+        const bgViewX = bgWorldX - viewportX;
+        const bgViewY = bgWorldY - viewportY;
+
+        // 裁剪2像素边框：从图片的(2,2)位置开始，宽度和高度各减4像素
+        const borderSize = 2;
+        const cropX = borderSize;
+        const cropY = borderSize;
+        const cropWidth = bgImg.width - borderSize * 2;
+        const cropHeight = bgImg.height - borderSize * 2;
+
+        bgCtx.drawImage(
+            bgImg,
+            cropX, cropY, cropWidth, cropHeight,  // 源图片裁剪区域
+            bgViewX, bgViewY, drawWidth, drawHeight  // 目标绘制区域
+        );
+    }
+
+    function drawCat() {
+        catCtx.clearRect(0, 0, catCanvas.width, catCanvas.height);
+        const currentFrames = currentDirection === 'right' ? rightFrames : leftFrames;
+        const imageIndex = currentDirection === 'right' ? currentFrameIndex : rightFrames.length + currentFrameIndex;
+
+        const catViewX = posX - viewportX;
+        const catViewY = posY - viewportY;
+
+        catCtx.drawImage(
+            images[imageIndex],
+            catViewX - imgW/2,
+            catViewY - imgH/2,
+            imgW,
+            imgH
+        );
+
+        // 更新AI对话气泡位置，跟随小猫右上角
+        const bubble = document.getElementById('chatBubble');
+        const rect = catCanvas.getBoundingClientRect();
+        const bubbleLeft = rect.left + window.scrollX + (catViewX + imgW/2) - 12;
+        const bubbleTop = rect.top + window.scrollY + (catViewY - imgH/2) - 120;
+        bubble.style.left = bubbleLeft + 'px';
+        bubble.style.top = bubbleTop + 'px';
+    }
+
+    function updatePosition() {
+        let moving = false;
+        let newDirection = currentDirection;
+        if (keyState.ArrowUp) {
+            posY -= speed;
+            moving = true;
+        }
+        if (keyState.ArrowDown) {
+            posY += speed;
+            moving = true;
+        }
+        if (keyState.ArrowLeft) {
+            posX -= speed;
+            newDirection = 'left';
+            moving = true;
+        }
+        if (keyState.ArrowRight) {
+            posX += speed;
+            newDirection = 'right';
+            moving = true;
+        }
+        if (newDirection !== currentDirection) {
+            currentDirection = newDirection;
+            currentFrameIndex = 0;
+        }
+
+        // 限制小猫在世界边界内（背景图片范围内）
+        posX = Math.max(imgW/2, Math.min(worldWidth - imgW/2, posX));
+        posY = Math.max(imgH/2, Math.min(worldHeight - imgH/2, posY));
+
+        // 更新视窗位置，让小猫始终在视窗中心
+        viewportX = posX - viewportWidth / 2;
+        viewportY = posY - viewportHeight / 2;
+
+        // 限制视窗不超出世界边界
+        viewportX = Math.max(0, Math.min(worldWidth - viewportWidth, viewportX));
+        viewportY = Math.max(0, Math.min(worldHeight - viewportHeight, viewportY));
+
+        if (moving) {
+            currentFrameIndex = (currentFrameIndex + 1) % rightFrames.length;
+            console.log(`小猫位置: X=${Math.round(posX)}, Y=${Math.round(posY)}`);
+        }
+    }
+
+    function checkRectCollision() {
+        // 检查小猫中心点是否在指定矩形内
+        const rectX1 = 568, rectX2 = 726;
+        const rectY1 = 480, rectY2 = 672;
+
+        // 管理页面区域检测
+        const mgmtX1 = 1136, mgmtX2 = 1232;
+        const mgmtY1 = 1056, mgmtY2 = 1152;
+
+        // 调试信息：显示小猫位置和检测区域
+        if (keyState.ArrowUp || keyState.ArrowDown || keyState.ArrowLeft || keyState.ArrowRight) {
+            console.log(`小猫位置: X=${Math.round(posX)}, Y=${Math.round(posY)}`);
+            console.log(`首页区域: X(${rectX1}~${rectX2}), Y(${rectY1}~${rectY2})`);
+            console.log(`管理区域: X(${mgmtX1}~${mgmtX2}), Y(${mgmtY1}~${mgmtY2})`);
+        }
+
+        // 检测首页跳转区域
+        if (
+            posX >= rectX1 && posX <= rectX2 &&
+            posY >= rectY1 && posY <= rectY2
+        ) {
+            console.log('检测到碰撞！准备跳转到首页');
+            window.location.href = '/'; // 跳转到首页
+        }
+
+        // 检测管理页面跳转区域
+        if (
+            posX >= mgmtX1 && posX <= mgmtX2 &&
+            posY >= mgmtY1 && posY <= mgmtY2
+        ) {
+            console.log('检测到碰撞！准备跳转到管理页面');
+            window.location.href = '/management.html'; // 跳转到管理页面
+        }
+    }
+
+    function drawFrame() {
+        drawBg();
+        drawCat();
+        updatePosition();
+        checkRectCollision(); // 在每一帧中调用碰撞检测
+        setTimeout(() => {
+            requestAnimationFrame(drawFrame);
+        }, 1000 / frameRate);
+    }
+
+    function start() {
+        resizeCanvas();
+        calculateWorldSize();
+        // 初始化小猫在世界中心
+        posX = worldWidth / 2;
+        posY = worldHeight / 2;
+        window.addEventListener('resize', () => {
+            resizeCanvas();
+            calculateWorldSize();
+            // 保证小猫在resize后仍在世界边界内
+            posX = Math.max(imgW/2, Math.min(worldWidth - imgW/2, posX));
+            posY = Math.max(imgH/2, Math.min(worldHeight - imgH/2, posY));
+        });
+        window.addEventListener('keydown', (e) => {
+            if (e.key in keyState) keyState[e.key] = true;
+
+            // F键弹出/关闭AI对话气泡
+            if (e.key === 'f' || e.key === 'F') {
+                const bubble = document.getElementById('chatBubble');
+                if (bubble.classList.contains('active')) {
+                    bubble.classList.remove('active');
+                } else {
+                    bubble.classList.add('active');
+                    setTimeout(() => {
+                        document.getElementById('userInput').focus();
+                    }, 100);
+                }
+            }
+            // ESC关闭对话气泡
+            if (e.key === 'Escape') {
+                const bubble = document.getElementById('chatBubble');
+                bubble.classList.remove('active');
+            }
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.key in keyState) keyState[e.key] = false;
+        });
+        drawFrame();
+
+        // AI对话逻辑
+        const chatMessages = document.getElementById('chatMessages');
+        const userInput = document.getElementById('userInput');
+        const sendButton = document.getElementById('sendButton');
+        sendButton.addEventListener('click', sendMessage);
+        userInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        function sendMessage() {
+            const message = userInput.value.trim();
+            if (message === '') return;
+            addMessage('user', message);
+            userInput.value = '';
+            addLoadingIndicator();
+            fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: message })
+            })
+                .then(response => {
+                    if (!response.ok) throw new Error('网络响应错误');
+                    return response.json();
+                })
+                .then(data => {
+                    removeLoadingIndicator();
+                    addMessage('assistant', data.message);
+                    scrollToBottom();
+                })
+                .catch(error => {
+                    removeLoadingIndicator();
+                    addMessage('system', 'AI服务暂时不可用，请稍后再试。');
+                });
+        }
+
+        function addMessage(role, content) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message ' + role;
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            const paragraphs = content.split('\n');
+            paragraphs.forEach(paragraph => {
+                if (paragraph.trim() !== '') {
+                    const p = document.createElement('p');
+                    p.textContent = paragraph;
+                    contentDiv.appendChild(p);
+                }
+            });
+            messageDiv.appendChild(contentDiv);
+            chatMessages.appendChild(messageDiv);
+            scrollToBottom();
+        }
+
+        function addLoadingIndicator() {
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = 'message assistant loading';
+            loadingDiv.id = 'loadingIndicator';
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.textContent = '思考中...';
+            loadingDiv.appendChild(contentDiv);
+            chatMessages.appendChild(loadingDiv);
+            scrollToBottom();
+        }
+
+        function removeLoadingIndicator() {
+            const loadingIndicator = document.getElementById('loadingIndicator');
+            if (loadingIndicator) loadingIndicator.remove();
+        }
+
+        function scrollToBottom() {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+    }
+</script>
+</body>
+</html> 

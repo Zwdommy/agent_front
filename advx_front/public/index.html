@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>小猫动画</title>
+    <style>
+        html, body {
+            width: 100vw;
+            height: 100vh;
+            margin: 0;
+            padding: 0;
+            background: #000;
+            overflow: hidden;
+        }
+        .canvas-container {
+            position: relative;
+            height: 100vh;
+            width: 100vw;
+            background: #000;
+        }
+        #background {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        #animation {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%;
+            height: 100%;
+            background: transparent;
+        }
+    </style>
+</head>
+<body>
+<div class="canvas-container">
+    <canvas id="background"></canvas>
+    <canvas id="animation"></canvas>
+</div>
+
+<script>
+    // 背景图片
+    const bgCanvas = document.getElementById('background');
+    const bgCtx = bgCanvas.getContext('2d');
+    const bgImg = new Image();
+    bgImg.src = '../src/assets/static/background/road.png';
+
+    // 视窗系统
+    let viewportX = 0;
+    let viewportY = 0;
+    let worldWidth = 0;
+    let worldHeight = 0;
+    let viewportWidth = 0;
+    let viewportHeight = 0;
+
+    // 小猫动画
+    const frameRate = 24;
+    const framePrefix = '../src/assets/static/170-261 dog lop/cat-run_';
+    const frameSuffix = '.png';
+    const rightFrames = [0, 2, 4, 6, 8, 10, 12];
+    const leftFrames = [1, 3, 5, 7, 9, 11, 13];
+
+    let currentDirection = 'right';
+    let currentFrameIndex = 0;
+    const images = [];
+    let loaded = 0;
+    const canvas = document.getElementById('animation');
+    const ctx = canvas.getContext('2d');
+    let posX = 0;
+    let posY = 0;
+    const imgW = 256;
+    const imgH = 256;
+    const speed = 32;
+    const keyState = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
+
+    // 初始化
+    function resizeCanvas() {
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const dpr = window.devicePixelRatio || 1;
+
+        bgCanvas.width = vw * dpr;
+        bgCanvas.height = vh * dpr;
+        canvas.width = vw * dpr;
+        canvas.height = vh * dpr;
+
+        bgCanvas.style.width = vw + 'px';
+        bgCanvas.style.height = vh + 'px';
+        canvas.style.width = vw + 'px';
+        canvas.style.height = vh + 'px';
+
+        viewportWidth = vw;
+        viewportHeight = vh;
+
+        bgCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+        if (bgImg.complete) {
+            calculateWorldSize();
+            drawBackground();
+        }
+    }
+
+    function calculateWorldSize() {
+        const scale = viewportHeight / bgImg.height * 4;
+        worldWidth = bgImg.width * scale;
+        worldHeight = bgImg.height * scale;
+
+        if (viewportX === 0 && viewportY === 0) {
+            viewportX = worldWidth / 2 - viewportWidth / 2;
+            viewportY = worldHeight / 2 - viewportHeight / 2;
+        }
+    }
+
+    function drawBackground() {
+        bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
+
+        const scale = viewportHeight / bgImg.height * 4;
+        const drawWidth = bgImg.width * scale;
+        const drawHeight = bgImg.height * scale;
+
+        const bgWorldX = (worldWidth - drawWidth) / 2;
+        const bgWorldY = (worldHeight - drawHeight) / 2;
+
+        const bgViewX = bgWorldX - viewportX;
+        const bgViewY = bgWorldY - viewportY;
+
+        bgCtx.drawImage(bgImg, bgViewX, bgViewY, drawWidth, drawHeight);
+    }
+
+    function updatePosition() {
+        let moving = false;
+        let newDirection = currentDirection;
+
+        if (keyState.ArrowUp) {
+            posY -= speed;
+            moving = true;
+        }
+        if (keyState.ArrowDown) {
+            posY += speed;
+            moving = true;
+        }
+        if (keyState.ArrowLeft) {
+            posX -= speed;
+            newDirection = 'left';
+            moving = true;
+        }
+        if (keyState.ArrowRight) {
+            posX += speed;
+            newDirection = 'right';
+            moving = true;
+        }
+
+        if (newDirection !== currentDirection) {
+            currentDirection = newDirection;
+            currentFrameIndex = 0;
+        }
+
+        posX = Math.max(imgW/2, Math.min(worldWidth - imgW/2, posX));
+        posY = Math.max(imgH/2, Math.min(worldHeight - imgH/2, posY));
+
+        viewportX = posX - viewportWidth / 2;
+        viewportY = posY - viewportHeight / 2;
+
+        viewportX = Math.max(0, Math.min(worldWidth - viewportWidth, viewportX));
+        viewportY = Math.max(0, Math.min(worldHeight - viewportHeight, viewportY));
+
+        // 输出小猫位置坐标
+        if (moving) {
+            console.log(`小猫位置: X=${Math.round(posX)}, Y=${Math.round(posY)}`);
+        }
+
+        return moving;
+    }
+
+    function checkRoadTopCollision() {
+        const scale = viewportHeight / bgImg.height * 4;
+        const drawHeight = bgImg.height * scale;
+        const bgWorldY = (worldHeight - drawHeight) / 2;
+
+        const roadTopY = bgWorldY;
+        const roadTopHeight = drawHeight / 18;
+        const roadTopBottomY = roadTopY + roadTopHeight;
+
+        const catTop = posY - imgH/2;
+        const catBottom = posY + imgH/2;
+
+        if (catBottom >= roadTopY && catTop <= roadTopBottomY) {
+            console.log('检测到碰撞！跳转到mainscene.html');
+            window.location.href = '/mainscene.html';
+        }
+    }
+
+    function drawFrame() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const currentFrames = currentDirection === 'right' ? rightFrames : leftFrames;
+        const imageIndex = currentDirection === 'right' ? currentFrameIndex : rightFrames.length + currentFrameIndex;
+
+        const catViewX = posX - viewportX;
+        const catViewY = posY - viewportY;
+
+        ctx.drawImage(
+            images[imageIndex],
+            catViewX - imgW/2,
+            catViewY - imgH/2,
+            imgW,
+            imgH
+        );
+
+        const isMoving = updatePosition();
+        if (isMoving) {
+            currentFrameIndex = (currentFrameIndex + 1) % currentFrames.length;
+        }
+
+        checkRoadTopCollision();
+        drawBackground();
+
+        setTimeout(() => {
+            requestAnimationFrame(drawFrame);
+        }, 1000 / frameRate);
+    }
+
+    // 事件监听
+    window.addEventListener('resize', resizeCanvas);
+    window.addEventListener('keydown', (e) => {
+        if (e.key in keyState) {
+            keyState[e.key] = true;
+        }
+    });
+    window.addEventListener('keyup', (e) => {
+        if (e.key in keyState) {
+            keyState[e.key] = false;
+        }
+    });
+
+    // 预加载图片
+    const allFrames = [...rightFrames, ...leftFrames];
+    for (let i = 0; i < allFrames.length; i++) {
+        const img = new Image();
+        img.src = `${framePrefix}${allFrames[i]}${frameSuffix}`;
+        img.onload = () => {
+            loaded++;
+            if (loaded === allFrames.length) {
+                requestAnimationFrame(drawFrame);
+            }
+        };
+        images.push(img);
+    }
+
+    // 初始化
+    bgImg.onload = function() {
+        resizeCanvas();
+        posX = worldWidth / 2;
+        posY = worldHeight / 2;
+    };
+</script>
+</body>
+</html> 

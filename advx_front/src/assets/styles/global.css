@@ -1,0 +1,10 @@
+@font-face {
+  font-family: 'Mont-Regular';
+  src: url('@/assets/font/fusion-pixel-12px-monospaced-zh_hans.otf') format('opentype');
+  font-weight: normal;
+  font-style: normal;
+}
+
+body {
+  font-family: 'Mont-Regular', sans-serif; /* 或者在需要的地方应用这个字体 */
+}
