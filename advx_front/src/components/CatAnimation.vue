@@ -8,139 +8,89 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useKeyboard } from '@/composables/useKeyboard'
+import { useSprites } from '@/composables/useSprites'
+import { useCamera } from '@/composables/useCamera'
+import { useBackground } from '@/composables/useBackground'
+import { useCollision } from '@/composables/useCollision'
+import { useRafLoop } from '@/composables/useRafLoop'
+import { setupDprCanvas } from '@/composables/useDprCanvas'
+import { useClickMove } from '@/composables/useClickMove'
+import { FRAME_RATE, IMAGE_WIDTH, IMAGE_HEIGHT, MOVE_SPEED, HORIZONTAL_OFFSET_RATIO } from '@/config/cat'
 
 const router = useRouter()
 
-// Canvas引用
+// Canvas 引用
 const container = ref<HTMLDivElement>()
 const backgroundCanvas = ref<HTMLCanvasElement>()
 const animationCanvas = ref<HTMLCanvasElement>()
 
-// 背景相关
 let bgCtx: CanvasRenderingContext2D | null = null
-let bgImg: HTMLImageElement
-
-// 视窗系统
-let viewportX = 0
-let viewportY = 0
-let worldWidth = 0
-let worldHeight = 0
-let viewportWidth = 0
-let viewportHeight = 0
-
-// 小猫动画相关
-const frameRate = 24
-const rightFrames = [0, 2, 4, 6, 8, 10, 12]
-const leftFrames = [1, 3, 5, 7, 9, 11, 13]
-
-let currentDirection = 'right'
-let currentFrameIndex = 0
-const images: HTMLImageElement[] = []
-let loaded = 0
 let ctx: CanvasRenderingContext2D | null = null
+
+// 组合模块
+const { keyState } = useKeyboard()
+const { images, preload, getImageIndex, getFrames } = useSprites()
+const camera = useCamera()
+const { bgImg, loadBackground, drawBackground } = useBackground()
+const { isCollideRoadTop } = useCollision()
+const { targetX, targetY, setTarget, stepToward, drawMarker } = useClickMove()
+
+// 角色状态
 let posX = 0
 let posY = 0
-const imgW = 140
-const imgH = 140
-const speed = 32
-const keyState = { 
-  ArrowUp: false, 
-  ArrowDown: false, 
-  ArrowLeft: false, 
-  ArrowRight: false 
-}
+let currentDirection: 'left' | 'right' = 'right'
+let currentFrameIndex = 0
 
-// 动画控制
-let animationId = 0
+// 动画循环控制
+let frameAccumulator = 0
+const frameInterval = 1000 / FRAME_RATE
 
-const resizeCanvas = () => {
+function resizeCanvas() {
   if (!backgroundCanvas.value || !animationCanvas.value) return
-  
+
   const vw = window.innerWidth
   const vh = window.innerHeight
-  const dpr = window.devicePixelRatio || 1
+  camera.setViewportSize(vw, vh)
+  if (bgCtx) setupDprCanvas(backgroundCanvas.value, bgCtx, vw, vh)
+  if (ctx) setupDprCanvas(animationCanvas.value, ctx, vw, vh)
 
-  backgroundCanvas.value.width = vw * dpr
-  backgroundCanvas.value.height = vh * dpr
-  animationCanvas.value.width = vw * dpr
-  animationCanvas.value.height = vh * dpr
-
-  backgroundCanvas.value.style.width = vw + 'px'
-  backgroundCanvas.value.style.height = vh + 'px'
-  animationCanvas.value.style.width = vw + 'px'
-  animationCanvas.value.style.height = vh + 'px'
-
-  viewportWidth = vw
-  viewportHeight = vh
-
-  if (bgCtx) {
-    bgCtx.setTransform(dpr, 0, 0, dpr, 0, 0)
-  }
-  if (ctx) {
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-  }
-
-  if (bgImg && bgImg.complete) {
-    calculateWorldSize()
-    drawBackground()
+  if (bgImg.value) {
+    camera.calculateWorldSize(bgImg.value)
+    drawBackground(
+      bgCtx!,
+      backgroundCanvas.value.width,
+      backgroundCanvas.value.height,
+      camera.viewportWidth.value,
+      camera.viewportHeight.value,
+      camera.viewportX.value,
+      camera.viewportY.value,
+      camera.worldWidth.value,
+      camera.worldHeight.value,
+    )
   }
 }
 
-const calculateWorldSize = () => {
-  if (!bgImg) return
-  
-  const scale = viewportHeight / bgImg.height * 7
-  worldWidth = bgImg.width * scale
-  worldHeight = bgImg.height * scale
-
-  if (viewportX === 0 && viewportY === 0) {
-    viewportX = worldWidth / 2 - viewportWidth / 2
-    viewportY = worldHeight / 2 - viewportHeight / 2
-  }
-}
-
-const drawBackground = () => {
-  if (!bgCtx || !bgImg) return
-  
-  bgCtx.clearRect(0, 0, backgroundCanvas.value!.width, backgroundCanvas.value!.height)
-
-  const scale = viewportHeight / bgImg.height * 7
-  const drawWidth = bgImg.width * scale
-  const drawHeight = bgImg.height * scale
-
-  const bgWorldX = (worldWidth - drawWidth) / 2
-  const bgWorldY = (worldHeight - drawHeight) / 2
-
-  // 添加水平偏移量让场景居中显示
-  const horizontalOffset = viewportWidth * 0.13 // 向右偏移18%的视窗宽度，稍微往左移动
-
-  const bgViewX = bgWorldX - viewportX + horizontalOffset
-  const bgViewY = bgWorldY - viewportY
-
-  bgCtx.drawImage(bgImg, bgViewX, bgViewY, drawWidth, drawHeight)
-}
-
-const updatePosition = () => {
+function updatePosition(): boolean {
   let moving = false
   let newDirection = currentDirection
 
-  if (keyState.ArrowUp) {
-    posY -= speed
-    moving = true
+  // 鼠标点击移动优先，其次键盘
+  if (pendingDeltaMs > 0) {
+    const res = stepToward(posX, posY, MOVE_SPEED * 60, pendingDeltaMs)
+    if (res.moving) {
+      moving = true
+      posX = res.x
+      posY = res.y
+      newDirection = res.direction
+    }
   }
-  if (keyState.ArrowDown) {
-    posY += speed
-    moving = true
-  }
-  if (keyState.ArrowLeft) {
-    posX -= speed
-    newDirection = 'left'
-    moving = true
-  }
-  if (keyState.ArrowRight) {
-    posX += speed
-    newDirection = 'right'
-    moving = true
+
+  if (!moving) {
+    if (keyState.value.ArrowUp) { posY -= MOVE_SPEED; moving = true }
+    if (keyState.value.ArrowDown) { posY += MOVE_SPEED; moving = true }
+    if (keyState.value.ArrowLeft) { posX -= MOVE_SPEED; newDirection = 'left'; moving = true }
+    if (keyState.value.ArrowRight) { posX += MOVE_SPEED; newDirection = 'right'; moving = true }
   }
 
   if (newDirection !== currentDirection) {
@@ -148,160 +98,129 @@ const updatePosition = () => {
     currentFrameIndex = 0
   }
 
-  posX = Math.max(imgW/2, Math.min(worldWidth - imgW/2, posX))
-  posY = Math.max(imgH/2, Math.min(worldHeight - imgH/2, posY))
+  // clamp 到世界范围
+  posX = Math.max(IMAGE_WIDTH / 2, Math.min(camera.worldWidth.value - IMAGE_WIDTH / 2, posX))
+  posY = Math.max(IMAGE_HEIGHT / 2, Math.min(camera.worldHeight.value - IMAGE_HEIGHT / 2, posY))
 
-  viewportX = posX - viewportWidth / 2
-  viewportY = posY - viewportHeight / 2
-
-  viewportX = Math.max(0, Math.min(worldWidth - viewportWidth, viewportX))
-  viewportY = Math.max(0, Math.min(worldHeight - viewportHeight, viewportY))
-
-  // 输出小猫位置坐标
-  if (moving) {
-    console.log(`小猫位置: X=${Math.round(posX)}, Y=${Math.round(posY)}`)
-  }
-
+  camera.follow(posX, posY)
   return moving
 }
 
-const checkRoadTopCollision = () => {
-  if (!bgImg) return
-  
-  const scale = viewportHeight / bgImg.height * 7
-  const drawHeight = bgImg.height * scale
-  const bgWorldY = (worldHeight - drawHeight) / 2
+let pendingDeltaMs = 0
+function renderOnce(delta: number, now: number) {
+  if (!ctx || !animationCanvas.value) return
 
-  const roadTopY = bgWorldY
-  const roadTopHeight = drawHeight / 18
-  const roadTopBottomY = roadTopY + roadTopHeight
+  frameAccumulator += delta
+  pendingDeltaMs = delta
 
-  const catTop = posY - imgH/2
-  const catBottom = posY + imgH/2
+  ctx.clearRect(0, 0, animationCanvas.value.width, animationCanvas.value.height)
 
-  if (catBottom >= roadTopY && catTop <= roadTopBottomY) {
-    console.log('检测到碰撞！跳转到main-scene')
-    // 这里可以使用Vue Router进行页面跳转
-    router.push('/main-scene')
+  // 帧推进（基于目标帧率）
+  const currentFrames = getFrames(currentDirection)
+  const shouldAdvance = frameAccumulator >= frameInterval
+  if (shouldAdvance) {
+    frameAccumulator -= frameInterval
   }
-}
 
-const drawFrame = () => {
-  if (!ctx) return
-  
-  ctx.clearRect(0, 0, animationCanvas.value!.width, animationCanvas.value!.height)
+  const horizontalOffset = camera.viewportWidth.value * HORIZONTAL_OFFSET_RATIO
+  const catViewX = posX - camera.viewportX.value + horizontalOffset
+  const catViewY = posY - camera.viewportY.value
 
-  const currentFrames = currentDirection === 'right' ? rightFrames : leftFrames
-  const imageIndex = currentDirection === 'right' ? currentFrameIndex : rightFrames.length + currentFrameIndex
-
-  // 添加同样的水平偏移量让小猫与背景同步
-  const horizontalOffset = viewportWidth * 0.13
-
-  const catViewX = posX - viewportX + horizontalOffset
-  const catViewY = posY - viewportY
-
-  if (images[imageIndex]) {
+  const imageIndex = getImageIndex(currentDirection, currentFrameIndex)
+  const sprite = images.value[imageIndex]
+  if (sprite) {
     ctx.drawImage(
-      images[imageIndex],
-      catViewX - imgW/2,
-      catViewY - imgH/2,
-      imgW,
-      imgH
+      sprite,
+      catViewX - IMAGE_WIDTH / 2,
+      catViewY - IMAGE_HEIGHT / 2,
+      IMAGE_WIDTH,
+      IMAGE_HEIGHT,
+    )
+  }
+
+  // 绘制点击标记（若存在目标）
+  if (targetX.value != null && targetY.value != null) {
+    drawMarker(
+      ctx,
+      targetX.value - camera.viewportX.value + horizontalOffset,
+      targetY.value - camera.viewportY.value,
+      now,
     )
   }
 
   const isMoving = updatePosition()
-  if (isMoving) {
+  if (isMoving && shouldAdvance) {
     currentFrameIndex = (currentFrameIndex + 1) % currentFrames.length
   }
 
-  checkRoadTopCollision()
-  drawBackground()
-
-  setTimeout(() => {
-    animationId = requestAnimationFrame(drawFrame)
-  }, 1000 / frameRate)
-}
-
-const handleKeyDown = (e: KeyboardEvent) => {
-  if (e.key in keyState) {
-    keyState[e.key as keyof typeof keyState] = true
+  // 碰撞检测与背景刷新
+  const catTop = posY - IMAGE_HEIGHT / 2
+  const catBottom = posY + IMAGE_HEIGHT / 2
+  if (
+    isCollideRoadTop(
+      bgImg.value,
+      camera.viewportHeight.value,
+      camera.worldHeight.value,
+      catTop,
+      catBottom,
+    )
+  ) {
+    router.push('/main-scene')
   }
-}
 
-const handleKeyUp = (e: KeyboardEvent) => {
-  if (e.key in keyState) {
-    keyState[e.key as keyof typeof keyState] = false
+  if (bgCtx && bgImg.value) {
+    drawBackground(
+      bgCtx,
+      backgroundCanvas.value!.width,
+      backgroundCanvas.value!.height,
+      camera.viewportWidth.value,
+      camera.viewportHeight.value,
+      camera.viewportX.value,
+      camera.viewportY.value,
+      camera.worldWidth.value,
+      camera.worldHeight.value,
+    )
   }
+
 }
 
-const preloadImages = () => {
-  const allFrames = [...rightFrames, ...leftFrames]
-  
-  for (let i = 0; i < allFrames.length; i++) {
-    const img = new Image()
-    // 使用动态import来获取正确的资源路径
-    import(`@/assets/static/170-261 dog lop/cat-run_${allFrames[i]}.png`).then(module => {
-      img.src = module.default
-      img.onload = () => {
-        loaded++
-        if (loaded === allFrames.length) {
-          requestAnimationFrame(drawFrame)
-        }
-      }
-    }).catch(() => {
-      console.error(`Failed to load image: cat-run_${allFrames[i]}.png`)
-    })
-    images.push(img)
-  }
-}
+const { start, stop } = useRafLoop((delta, now) => {
+  renderOnce(delta, now)
+})
 
-const initBackgroundImage = () => {
-  bgImg = new Image()
-  // 使用动态import来获取正确的资源路径
-  import('@/assets/static/background/road.png').then(module => {
-    bgImg.src = module.default
-    bgImg.onload = () => {
-      resizeCanvas()
-      posX = worldWidth / 2
-      posY = worldHeight / 2
-    }
-  }).catch(() => {
-    console.error('Failed to load background image: road.png')
-  })
-}
-
-onMounted(() => {
+onMounted(async () => {
   if (!backgroundCanvas.value || !animationCanvas.value) return
-  
+
   bgCtx = backgroundCanvas.value.getContext('2d')
   ctx = animationCanvas.value.getContext('2d')
-  
-  if (!bgCtx || !ctx) {
-    console.error('Failed to get canvas context')
-    return
-  }
+  if (!bgCtx || !ctx) return
 
-  // 初始化
   resizeCanvas()
-  initBackgroundImage()
-  preloadImages()
 
-  // 事件监听
+  const img = await loadBackground()
+  camera.calculateWorldSize(img)
+  // 初始位置放到世界中心
+  posX = camera.worldWidth.value / 2
+  posY = camera.worldHeight.value / 2
+
+  await preload()
+  start()
+
   window.addEventListener('resize', resizeCanvas)
-  window.addEventListener('keydown', handleKeyDown)
-  window.addEventListener('keyup', handleKeyUp)
+  // 点击事件：将屏幕坐标转换为世界坐标
+  animationCanvas.value.addEventListener('click', (e) => {
+    const rect = animationCanvas.value!.getBoundingClientRect()
+    const sx = e.clientX - rect.left
+    const sy = e.clientY - rect.top
+    const worldX = sx + camera.viewportX.value - camera.viewportWidth.value * HORIZONTAL_OFFSET_RATIO
+    const worldY = sy + camera.viewportY.value
+    setTarget(worldX, worldY, performance.now())
+  })
 })
 
 onUnmounted(() => {
-  // 清理事件监听器和动画
   window.removeEventListener('resize', resizeCanvas)
-  window.removeEventListener('keydown', handleKeyDown)
-  window.removeEventListener('keyup', handleKeyUp)
-  
-  if (animationId) {
-    cancelAnimationFrame(animationId)
-  }
+  stop()
 })
 </script>
 

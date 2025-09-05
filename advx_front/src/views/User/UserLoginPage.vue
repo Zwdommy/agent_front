@@ -78,7 +78,7 @@ const handleLogin = async () => {
       userStore.setLoginUser(res.data.data);
       // 存储用户信息到本地存储，以便导航守卫使用
       localStorage.setItem('user', JSON.stringify(res.data.data));
-      router.push('/index');
+      router.push('/cat-animation');
     } else {
       // 登录失败
       alert(res.data?.message || '登录失败');
